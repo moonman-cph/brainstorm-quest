@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Tavern — BrainStorm Quest</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .tavern-header { margin-bottom: 6px; }
+    .party-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+    .oracle-section { margin-top: auto; padding-top: 20px; }
+    .oracle-note {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: center;
+      margin-top: 10px;
+      font-style: italic;
+      line-height: 1.6;
+    }
+    .loading-section { display: none; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; text-align: center; }
+    .loading-section.active { display: flex; }
+    .count-badge {
+      font-family: var(--font-pixel);
+      font-size: 9px;
+      color: var(--text-dim);
+      margin-bottom: 16px;
+    }
+    .count-badge span { color: var(--gold); }
+    .share-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 14px;
+      margin-bottom: 20px;
+    }
+    .share-label { font-size: 12px; color: var(--text-dim); flex: 1; word-break: break-all; }
+    .error-msg { font-size: 12px; color: var(--ruby); text-align: center; margin-top: 8px; min-height: 18px; }
+  </style>
+</head>
+<body>
+
+<!-- Echo layer (drifting answer fragments) -->
+<div class="echo-layer" id="echo-layer"></div>
+
+<div class="page">
+
+  <div class="tavern-header">
+    <h2 style="margin-bottom: 6px;">The Tavern</h2>
+    <p class="subtitle" style="margin-bottom: 4px;">
+      The tavern smells of cold brew and unvalidated assumptions.
+    </p>
+    <p class="fine-print">Your party is gathering. This is the exciting part. It's also just waiting.</p>
+  </div>
+
+  <hr class="divider">
+
+  <!-- Share link -->
+  <div>
+    <div style="font-family: var(--font-pixel); font-size: 7px; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">
+      Invite others to this quest
+    </div>
+    <div class="share-row">
+      <span class="share-label" id="share-link"></span>
+      <button class="btn btn--ghost" id="copy-btn" style="padding: 8px 12px; min-height: 36px; font-size: 8px;">Copy</button>
+    </div>
+  </div>
+
+  <!-- Party count -->
+  <div class="count-badge" id="count-badge">
+    <span id="done-count">0</span> hero(es) ready · waiting for more...
+  </div>
+
+  <!-- Hero slots -->
+  <div class="party-list" id="party-list"></div>
+
+  <!-- Loading state (while Oracle processes) -->
+  <div class="loading-section" id="loading-section">
+    <p style="font-family: var(--font-pixel); font-size: 9px; color: var(--gold); line-height: 1.8;">
+      The Oracle reads<br>the threads of fate...
+    </p>
+    <div class="rune-loader">
+      <span class="rune">✦</span>
+      <span class="rune">◈</span>
+      <span class="rune">⬡</span>
+      <span class="rune">◈</span>
+      <span class="rune">✦</span>
+    </div>
+    <p class="fine-print">(the AI is processing your inputs, please hold)</p>
+  </div>
+
+  <!-- Oracle CTA (host only, ≥2 done) -->
+  <div class="oracle-section" id="oracle-section" style="display:none;">
+    <button class="btn btn--gold btn--full btn--large" id="oracle-btn">
+      🔮 Consult the Oracle
+    </button>
+    <p class="oracle-note">
+      The Oracle is available.<br>
+      Results not guaranteed to be fundable.
+    </p>
+    <div class="error-msg" id="oracle-error"></div>
+  </div>
+
+  <!-- Non-host waiting message -->
+  <div id="waiting-msg" style="display:none; margin-top: auto; text-align: center; padding-top: 20px;">
+    <p class="fine-print">
+      Waiting for the quest host to consult the Oracle.<br>
+      You'll be redirected automatically when the loot drops.
+    </p>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script src="app.js"></script>
+<script>
+  let session    = null;
+  let local      = null;
+  let responses  = [];
+  let echoWords  = [];
+  let echoTimer  = null;
+
+  const partyList    = document.getElementById('party-list');
+  const oracleSection= document.getElementById('oracle-section');
+  const waitingMsg   = document.getElementById('waiting-msg');
+  const loadingSection=document.getElementById('loading-section');
+  const oracleBtn    = document.getElementById('oracle-btn');
+  const oracleError  = document.getElementById('oracle-error');
+  const doneCount    = document.getElementById('done-count');
+  const countBadge   = document.getElementById('count-badge');
+  const shareLink    = document.getElementById('share-link');
+  const copyBtn      = document.getElementById('copy-btn');
+
+  const CLASS_MAP = {};
+  QUEST_CONFIG.classes.forEach(c => { CLASS_MAP[c.id] = c; });
+
+  async function init() {
+    const code = getParam('session');
+    if (!code) { window.location.href = 'index.html'; return; }
+
+    local = loadLocal();
+
+    try {
+      session = await fetchSession(code);
+    } catch {
+      window.location.href = 'index.html';
+      return;
+    }
+
+    // If session already done, go straight to results
+    if (session.status === 'done') {
+      navigate('results.html', { session: session.code });
+      return;
+    }
+
+    const link = `${window.location.origin}/join.html?session=${session.code}`;
+    shareLink.textContent = link;
+    copyBtn.addEventListener('click', async () => {
+      await copyToClipboard(link);
+      copyBtn.textContent = '✓';
+      setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+    });
+
+    // Initial load
+    responses = await fetchResponses(session.id);
+    renderParty();
+    collectEchoWords();
+    startEchoDrift();
+
+    // Realtime subscription
+    const db = getSupabase();
+    db.channel('responses-' + session.id)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'responses',
+        filter: `session_id=eq.${session.id}`,
+      }, payload => {
+        responses.push(payload.new);
+        collectEchoWords();
+        renderParty();
+      })
+      .subscribe();
+
+    // Also poll for session status (for non-host redirect)
+    db.channel('session-' + session.id)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'sessions',
+        filter: `id=eq.${session.id}`,
+      }, payload => {
+        if (payload.new.status === 'done') {
+          navigate('results.html', { session: session.code });
+        }
+      })
+      .subscribe();
+
+    // Show oracle button for host when ≥2 done
+    updateOracleCTA();
+  }
+
+  function renderParty() {
+    partyList.innerHTML = '';
+    const done = responses.length;
+    doneCount.textContent = done;
+    countBadge.innerHTML = done === 0
+      ? `<span>0</span> heroes in the tavern yet... (share the link above)`
+      : `<span>${done}</span> hero${done === 1 ? '' : 'es'} ready · the Oracle grows impatient`;
+
+    responses.forEach(r => {
+      const cls = CLASS_MAP[r.class] || {};
+      const slot = document.createElement('div');
+      slot.className = 'hero-slot submitted';
+      const name = session.anonymous ? (cls.label || r.slot) : r.slot;
+      slot.innerHTML = `
+        <span class="hero-icon">${cls.icon || '⚔️'}</span>
+        <div class="hero-info">
+          <div class="hero-name">${name}</div>
+          <div class="hero-status">Scroll submitted ✓</div>
+        </div>
+        <span class="hero-status-icon">✅</span>
+      `;
+      partyList.appendChild(slot);
+    });
+
+    updateOracleCTA();
+  }
+
+  function updateOracleCTA() {
+    const isHost = local?.isHost;
+    const done   = responses.length;
+
+    if (done >= 2 && isHost) {
+      oracleSection.style.display = 'block';
+      waitingMsg.style.display    = 'none';
+    } else if (!isHost) {
+      oracleSection.style.display = 'none';
+      waitingMsg.style.display    = 'block';
+    }
+  }
+
+  oracleBtn.addEventListener('click', async () => {
+    oracleBtn.disabled   = true;
+    oracleBtn.textContent= '✦ Consulting...';
+    oracleError.textContent = '';
+    oracleSection.style.display = 'none';
+    loadingSection.classList.add('active');
+
+    try {
+      await updateSessionStatus(session.id, 'synthesizing');
+      const res = await fetch('/api/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionCode: session.code }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      navigate('results.html', { session: session.code });
+    } catch (err) {
+      loadingSection.classList.remove('active');
+      oracleSection.style.display = 'block';
+      oracleBtn.disabled   = false;
+      oracleBtn.textContent= '🔮 Consult the Oracle';
+      oracleError.textContent = 'The Oracle is unavailable. (Check API keys.) Try again.';
+    }
+  });
+
+  // ── Echo drift ──────────────────────────────────────────────────────────────
+
+  function collectEchoWords() {
+    echoWords = [];
+    responses.forEach(r => {
+      const ans = r.answers || {};
+      Object.values(ans).forEach(val => {
+        if (typeof val === 'string') {
+          val.split(/\s+/).filter(w => w.length > 4).forEach(w => {
+            echoWords.push(`...${w.replace(/[^a-zA-Z0-9'-]/g, '')}...`);
+          });
+        }
+      });
+    });
+  }
+
+  function spawnEchoWord() {
+    if (!echoWords.length) return;
+    const word = echoWords[Math.floor(Math.random() * echoWords.length)];
+    const el   = document.createElement('div');
+    el.className = 'echo-word';
+    el.textContent = word;
+    el.style.left    = `${5 + Math.random() * 80}%`;
+    el.style.animationDuration = `${8 + Math.random() * 6}s`;
+    el.style.animationDelay   = `0s`;
+    document.getElementById('echo-layer').appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  }
+
+  function startEchoDrift() {
+    echoTimer = setInterval(() => {
+      if (echoWords.length) spawnEchoWord();
+    }, 2200);
+  }
+
+  init();
+</script>
+</body>
+</html>

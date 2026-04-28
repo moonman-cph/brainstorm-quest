@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrainStorm Quest</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .logo {
+      text-align: center;
+      padding: 32px 0 8px;
+    }
+    .logo-icon {
+      font-size: 52px;
+      display: block;
+      margin-bottom: 16px;
+      filter: drop-shadow(0 0 12px rgba(244,196,48,0.5));
+    }
+    .tagline {
+      font-size: 13px;
+      color: var(--text-dim);
+      text-align: center;
+      line-height: 1.7;
+      margin-bottom: 36px;
+    }
+    .section-label {
+      font-family: var(--font-pixel);
+      font-size: 8px;
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .join-row {
+      display: flex;
+      gap: 8px;
+    }
+    .join-row .input { flex: 1; }
+    .error-msg {
+      font-size: 12px;
+      color: var(--ruby);
+      margin-top: 8px;
+      min-height: 18px;
+    }
+    .footer-note {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      font-style: italic;
+      margin-top: auto;
+      padding-top: 24px;
+      line-height: 1.6;
+    }
+    #create-form { display: none; }
+    #create-form.visible { display: flex; flex-direction: column; gap: 14px; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="logo">
+    <span class="logo-icon">⚔️</span>
+    <h1>BrainStorm Quest</h1>
+  </div>
+
+  <p class="tagline">
+    Welcome, brave entrepreneur. Or manager.<br>
+    Or that one person who always ends up running things.<br>
+    <em>You know who you are.</em>
+  </p>
+
+  <!-- Join a quest -->
+  <div class="stack stack-md" style="margin-bottom: 28px;">
+    <div class="section-label">Join a quest</div>
+    <div class="join-row">
+      <input
+        class="input"
+        id="join-code"
+        placeholder="Enter quest code (e.g. RAVEN-WOLF)"
+        autocomplete="off"
+        spellcheck="false"
+        style="text-transform: uppercase; font-family: var(--font-pixel); font-size: 11px; letter-spacing: 0.1em;"
+      >
+      <button class="btn btn--gold" id="join-btn">Enter</button>
+    </div>
+    <div class="error-msg" id="join-error"></div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- Start a quest -->
+  <div class="stack stack-md">
+    <div class="section-label">Start a new quest</div>
+    <button class="btn btn--ghost btn--full" id="toggle-create">+ Begin a new quest</button>
+
+    <div id="create-form">
+      <div>
+        <label class="section-label" for="quest-name">Quest name</label>
+        <input class="input" id="quest-name" placeholder="e.g. The Quest for Our Next Big Thing">
+      </div>
+
+      <div class="card">
+        <div class="toggle-row">
+          <div>
+            <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Anonymous responses</div>
+            <div class="text-small text-dim">Hide who said what from other heroes. (Recommended for honest answers.)</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="anon-toggle" checked>
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+      </div>
+
+      <button class="btn btn--gold btn--full btn--large" id="create-btn">
+        ⚔️ Begin the quest
+      </button>
+      <div class="error-msg" id="create-error"></div>
+    </div>
+  </div>
+
+  <p class="footer-note">
+    A startup ideation tool dressed as a fantasy game.<br>
+    (It's mostly a fantasy game. But the ideas are real.)
+  </p>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+  const joinCode  = document.getElementById('join-code');
+  const joinBtn   = document.getElementById('join-btn');
+  const joinError = document.getElementById('join-error');
+  const toggleBtn = document.getElementById('toggle-create');
+  const createForm= document.getElementById('create-form');
+  const questName = document.getElementById('quest-name');
+  const anonToggle= document.getElementById('anon-toggle');
+  const createBtn = document.getElementById('create-btn');
+  const createError = document.getElementById('create-error');
+
+  toggleBtn.addEventListener('click', () => {
+    createForm.classList.toggle('visible');
+    toggleBtn.textContent = createForm.classList.contains('visible')
+      ? '✕ Cancel'
+      : '+ Begin a new quest';
+  });
+
+  joinCode.addEventListener('input', () => {
+    joinCode.value = joinCode.value.toUpperCase().replace(/[^A-Z-]/g, '');
+    joinError.textContent = '';
+  });
+
+  joinCode.addEventListener('keydown', e => {
+    if (e.key === 'Enter') joinBtn.click();
+  });
+
+  joinBtn.addEventListener('click', async () => {
+    const code = joinCode.value.trim();
+    if (!code) { joinError.textContent = 'Enter a quest code first, hero.'; return; }
+
+    joinBtn.textContent = '...';
+    joinBtn.disabled = true;
+    joinError.textContent = '';
+
+    try {
+      const session = await fetchSession(code);
+      if (session.status === 'done') {
+        navigate('results.html', { session: session.code });
+        return;
+      }
+      navigate('join.html', { session: session.code });
+    } catch {
+      joinError.textContent = "No quest found with that code. Try again, brave one.";
+      joinBtn.textContent = 'Enter';
+      joinBtn.disabled = false;
+    }
+  });
+
+  createBtn.addEventListener('click', async () => {
+    const name = questName.value.trim();
+    if (!name) { createError.textContent = 'Your quest needs a name. Even a terrible one.'; return; }
+
+    createBtn.textContent = '...forging quest...';
+    createBtn.disabled = true;
+    createError.textContent = '';
+
+    try {
+      const session = await createSession(name, anonToggle.checked);
+      saveLocal({ sessionId: session.id, sessionCode: session.code, isHost: true });
+      navigate('join.html', { session: session.code, host: 'true' });
+    } catch (err) {
+      createError.textContent = 'The forge is cold. Check your Supabase config.';
+      createBtn.textContent = '⚔️ Begin the quest';
+      createBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

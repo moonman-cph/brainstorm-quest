@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Quest — BrainStorm</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .quest-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    .class-badge {
+      font-size: 28px;
+      line-height: 1;
+      filter: drop-shadow(0 0 6px rgba(244,196,48,0.4));
+    }
+    .quest-prompt {
+      font-family: var(--font-pixel);
+      font-size: clamp(10px, 3vw, 13px);
+      color: var(--gold);
+      text-shadow: 0 0 8px rgba(244,196,48,0.3);
+      line-height: 1.8;
+      margin-bottom: 10px;
+    }
+    .quest-subtext {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.7;
+      margin-bottom: 22px;
+      font-style: italic;
+    }
+    .question-screen {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+    }
+    .question-screen.active {
+      display: flex;
+    }
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateX(30px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    .question-screen.entering {
+      animation: slide-in 0.3s ease forwards;
+    }
+    .submit-section {
+      margin-top: auto;
+      padding-top: 20px;
+    }
+    .total-xp {
+      text-align: center;
+      font-family: var(--font-pixel);
+      font-size: 9px;
+      color: var(--gold-dim);
+      margin-bottom: 8px;
+    }
+    .scroll-complete {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      text-align: center;
+      gap: 20px;
+    }
+    .scroll-complete.active { display: flex; }
+    .scroll-seal {
+      font-size: 64px;
+      filter: drop-shadow(0 0 16px rgba(244,196,48,0.6));
+      animation: pulse-ring 2s infinite;
+    }
+    .char-count {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-align: right;
+      margin-top: 4px;
+    }
+    .char-count.warn { color: var(--ruby); }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Progress dots -->
+  <div class="progress-dots" id="progress-dots"></div>
+
+  <!-- Quest header (class + name) -->
+  <div class="quest-header">
+    <span class="class-badge" id="class-badge"></span>
+    <div>
+      <div style="font-family: var(--font-pixel); font-size: 8px; color: var(--text-dim); margin-bottom: 4px;">Hero</div>
+      <div style="font-size: 15px; font-weight: 600;" id="hero-name-display"></div>
+    </div>
+    <div style="margin-left: auto; text-align: right;">
+      <div id="xp-display" class="total-xp">0 XP</div>
+    </div>
+  </div>
+
+  <!-- Question screens (rendered by JS) -->
+  <div id="question-screens"></div>
+
+  <!-- Completion screen -->
+  <div class="scroll-complete" id="complete-screen">
+    <div class="scroll-seal">📜</div>
+    <h2>Scroll complete.</h2>
+    <p class="subtitle">
+      The scroll is complete.<br>
+      Somewhere, a VC is already skeptical.
+    </p>
+    <p class="fine-print">Sending your wisdom to the tavern...</p>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script src="app.js"></script>
+<script>
+  let session   = null;
+  let local     = null;
+  let currentQ  = 0;
+  let answers   = {};
+  let totalXP   = 0;
+
+  const screensEl  = document.getElementById('question-screens');
+  const dotsEl     = document.getElementById('progress-dots');
+  const completeEl = document.getElementById('complete-screen');
+  const xpDisplay  = document.getElementById('xp-display');
+
+  async function init() {
+    const code = getParam('session');
+    if (!code) { window.location.href = 'index.html'; return; }
+
+    local = loadLocal();
+    if (!local?.heroClass) { navigate('join.html', { session: code }); return; }
+
+    try {
+      session = await fetchSession(code);
+    } catch {
+      window.location.href = 'index.html';
+      return;
+    }
+
+    const cls = QUEST_CONFIG.classes.find(c => c.id === local.heroClass);
+    document.getElementById('class-badge').textContent = cls?.icon || '⚔️';
+    document.getElementById('hero-name-display').textContent = local.heroName || cls?.label || 'Hero';
+
+    buildDots();
+    buildQuestions(cls);
+    showQuestion(0);
+  }
+
+  function buildDots() {
+    QUEST_CONFIG.questions.forEach((_, i) => {
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      dot.id = `dot-${i}`;
+      dotsEl.appendChild(dot);
+    });
+  }
+
+  function buildQuestions(cls) {
+    QUEST_CONFIG.questions.forEach((q, i) => {
+      const override = q.classOverrides?.[cls?.id];
+      const prompt   = override?.prompt  || q.defaultPrompt;
+      const subtext  = override?.subtext || q.defaultSubtext;
+
+      const screen = document.createElement('div');
+      screen.className = 'question-screen';
+      screen.id = `screen-${i}`;
+
+      if (q.type === 'text') {
+        screen.innerHTML = `
+          <div class="quest-prompt">${prompt}</div>
+          <div class="quest-subtext">${subtext}</div>
+          <textarea
+            class="input"
+            id="answer-${i}"
+            placeholder="${q.placeholder || 'Write your answer...'}"
+            rows="5"
+            maxlength="400"
+          ></textarea>
+          <div class="char-count" id="chars-${i}">0 / 400</div>
+          <div class="submit-section">
+            <button class="btn btn--gold btn--full btn--large" id="next-${i}">
+              ${i < QUEST_CONFIG.questions.length - 1 ? 'Next →' : '📜 Complete the scroll'}
+            </button>
+          </div>
+        `;
+        // Wire up char counter and next button after insertion
+        screen._wireUp = () => {
+          const ta     = document.getElementById(`answer-${i}`);
+          const chars  = document.getElementById(`chars-${i}`);
+          const nextBtn= document.getElementById(`next-${i}`);
+          ta.addEventListener('input', () => {
+            const n = ta.value.length;
+            chars.textContent = `${n} / 400`;
+            chars.classList.toggle('warn', n > 350);
+          });
+          nextBtn.addEventListener('click', () => advance(i, ta.value.trim()));
+        };
+      } else if (q.type === 'chips') {
+        const chipsHtml = q.options.map(opt => `
+          <div class="chip" data-value="${opt.value}" data-qi="${i}">
+            <span class="chip-label">${opt.label}</span>
+            <span class="chip-desc">${opt.description}</span>
+          </div>
+        `).join('');
+        screen.innerHTML = `
+          <div class="quest-prompt">${prompt}</div>
+          <div class="quest-subtext">${subtext}</div>
+          <div class="chips" id="chips-${i}">${chipsHtml}</div>
+          <div class="submit-section">
+            <button class="btn btn--gold btn--full btn--large" id="next-${i}" disabled>
+              ${i < QUEST_CONFIG.questions.length - 1 ? 'Next →' : '📜 Complete the scroll'}
+            </button>
+          </div>
+        `;
+        screen._wireUp = () => {
+          const nextBtn = document.getElementById(`next-${i}`);
+          document.querySelectorAll(`.chip[data-qi="${i}"]`).forEach(chip => {
+            chip.addEventListener('click', () => {
+              document.querySelectorAll(`.chip[data-qi="${i}"]`).forEach(c => c.classList.remove('selected'));
+              chip.classList.add('selected');
+              nextBtn.disabled = false;
+            });
+          });
+          nextBtn.addEventListener('click', () => {
+            const selected = document.querySelector(`.chip[data-qi="${i}"].selected`);
+            if (selected) advance(i, selected.dataset.value);
+          });
+        };
+      }
+
+      screensEl.appendChild(screen);
+    });
+
+    // Wire up all screens
+    document.querySelectorAll('.question-screen').forEach(s => s._wireUp?.());
+  }
+
+  function showQuestion(index) {
+    document.querySelectorAll('.question-screen').forEach(s => s.classList.remove('active', 'entering'));
+    document.querySelectorAll('.dot').forEach((d, i) => {
+      d.classList.toggle('done', i < index);
+      d.classList.toggle('active', i === index);
+    });
+    const screen = document.getElementById(`screen-${index}`);
+    if (screen) {
+      screen.classList.add('active', 'entering');
+      // Focus text area if present
+      setTimeout(() => {
+        const ta = screen.querySelector('textarea');
+        if (ta) ta.focus();
+      }, 350);
+    }
+    currentQ = index;
+  }
+
+  function advance(index, value) {
+    if (!value) return;
+
+    const q = QUEST_CONFIG.questions[index];
+    answers[q.key] = value;
+    totalXP += q.xpReward;
+    xpDisplay.textContent = `${totalXP} XP`;
+    showXP(q.xpReward);
+
+    const next = index + 1;
+    if (next < QUEST_CONFIG.questions.length) {
+      // Show provocation between questions
+      const prov = QUEST_CONFIG.provocations[index % QUEST_CONFIG.provocations.length];
+      showProvocation(prov.bold, prov.fine, () => showQuestion(next));
+    } else {
+      finishQuest();
+    }
+  }
+
+  async function finishQuest() {
+    // Mark all dots done
+    document.querySelectorAll('.dot').forEach(d => { d.classList.remove('active'); d.classList.add('done'); });
+    document.querySelectorAll('.question-screen').forEach(s => s.classList.remove('active'));
+    completeEl.classList.add('active');
+
+    try {
+      await submitResponse(session.id, local.heroSlot, local.heroClass, answers);
+      setTimeout(() => navigate('tavern.html', { session: session.code }), 1800);
+    } catch (err) {
+      completeEl.querySelector('.fine-print').textContent =
+        'Something went wrong sending your scroll. (The oracle is displeased.) Refresh and try again.';
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>

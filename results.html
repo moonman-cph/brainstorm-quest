@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Oracle's Loot — BrainStorm Quest</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .oracle-intro {
+      text-align: center;
+      padding: 24px 0 20px;
+    }
+    .oracle-icon {
+      font-size: 52px;
+      display: block;
+      margin-bottom: 16px;
+      filter: drop-shadow(0 0 16px rgba(244,196,48,0.5));
+    }
+    .oracle-sub {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.7;
+      font-style: italic;
+      margin-top: 10px;
+    }
+    .card-colors { --c1: var(--ruby); --c2: var(--sapphire); --c3: var(--emerald); }
+    .quest-card:nth-child(1) { border-color: var(--ruby);     }
+    .quest-card:nth-child(2) { border-color: var(--sapphire); }
+    .quest-card:nth-child(3) { border-color: var(--emerald);  }
+    .quest-card:nth-child(1).revealed { box-shadow: 0 0 20px rgba(232,64,64,0.15); }
+    .quest-card:nth-child(2).revealed { box-shadow: 0 0 20px rgba(64,128,232,0.15); }
+    .quest-card:nth-child(3).revealed { box-shadow: 0 0 20px rgba(64,200,112,0.15); }
+    .dragon-line {
+      background: var(--surface2);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.5;
+      border-left: 3px solid var(--gold-dim);
+    }
+    .alignment-item { font-size: 12px; }
+    .loading-init {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      gap: 20px;
+      text-align: center;
+    }
+    .results-footer {
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--text-dim);
+      text-align: center;
+      font-style: italic;
+      line-height: 1.8;
+    }
+    .new-quest-btn { margin-top: 20px; }
+    .section-header {
+      font-family: var(--font-pixel);
+      font-size: 8px;
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin: 28px 0 12px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Loading state (while fetching) -->
+  <div class="loading-init" id="loading-init">
+    <span style="font-size: 52px;">🔮</span>
+    <div class="rune-loader">
+      <span class="rune">✦</span><span class="rune">◈</span><span class="rune">⬡</span>
+      <span class="rune">◈</span><span class="rune">✦</span>
+    </div>
+    <p style="font-family: var(--font-pixel); font-size: 9px; color: var(--gold); line-height: 1.8;">
+      Retrieving the Oracle's loot...
+    </p>
+  </div>
+
+  <!-- Results (hidden until loaded) -->
+  <div id="results-content" style="display:none;">
+
+    <div class="oracle-intro">
+      <span class="oracle-icon">🔮</span>
+      <h1>The Oracle has spoken.</h1>
+      <p class="oracle-sub">
+        Three legendary business opportunities have been identified.<br>
+        They are definitely real ideas and not just pattern-matched startup clichés.<br>
+        <strong style="color: var(--gold);">Probably.</strong>
+      </p>
+    </div>
+
+    <!-- Quest cards -->
+    <div class="quest-cards" id="quest-cards"></div>
+
+    <!-- Party alignment -->
+    <div class="section-header">Party alignment</div>
+    <div class="card" style="margin-bottom: 8px;">
+      <div class="alignment-grid" id="alignment-grid"></div>
+    </div>
+
+    <!-- Chemistry score -->
+    <div class="section-header">Party chemistry</div>
+    <div class="card card--gold">
+      <div class="chemistry-score">
+        <span class="chemistry-number" id="chemistry-number">—</span>
+        <span class="chemistry-label">QUEST ALIGNMENT SCORE</span>
+        <p class="chemistry-flavor" id="chemistry-flavor"></p>
+      </div>
+    </div>
+
+    <div class="results-footer">
+      * Past quests do not guarantee future funding.<br>
+      Please consult a lawyer before slaying actual dragons.<br><br>
+      <em>BrainStorm Quest — an AI that read your hopes and dreams<br>and turned them into slides suitable for Demo Day.</em>
+    </div>
+
+    <div class="new-quest-btn">
+      <a href="index.html" class="btn btn--ghost btn--full">⚔️ Start a new quest</a>
+    </div>
+
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script src="app.js"></script>
+<script>
+  const CARD_COLORS = [
+    { accent: '#e84040', label: 'Ruby' },
+    { accent: '#4080e8', label: 'Sapphire' },
+    { accent: '#40c870', label: 'Emerald' },
+  ];
+
+  async function init() {
+    const code = getParam('session');
+    if (!code) { window.location.href = 'index.html'; return; }
+
+    let session;
+    try {
+      session = await fetchSession(code);
+    } catch {
+      window.location.href = 'index.html';
+      return;
+    }
+
+    // If not done yet, poll until it is
+    if (session.status !== 'done') {
+      await waitForResults(session.id, code);
+      return;
+    }
+
+    showResults(session.result_json);
+  }
+
+  async function waitForResults(sessionId, code) {
+    // Subscribe to session updates
+    const db = getSupabase();
+    db.channel('results-wait-' + sessionId)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'sessions',
+        filter: `id=eq.${sessionId}`,
+      }, payload => {
+        if (payload.new.status === 'done' && payload.new.result_json) {
+          showResults(payload.new.result_json);
+        }
+      })
+      .subscribe();
+  }
+
+  function showResults(data) {
+    document.getElementById('loading-init').style.display = 'none';
+    document.getElementById('results-content').style.display = 'block';
+
+    const cardsEl = document.getElementById('quest-cards');
+
+    (data.ideas || []).forEach((idea, i) => {
+      const color = CARD_COLORS[i] || CARD_COLORS[0];
+      const card  = document.createElement('div');
+      card.className = 'quest-card';
+      card.style.animationDelay = `${i * 0.7}s`;
+
+      const prosList = (idea.pros || []).map(p =>
+        `<li data-icon="⚡">${p}</li>`).join('');
+      const consList = (idea.cons || []).map(c =>
+        `<li data-icon="☠️">${c}</li>`).join('');
+      const compList = (idea.competitors || []).map(c =>
+        `<li data-icon="🗺️"><strong>${c.name}</strong> — ${c.difference}</li>`).join('');
+
+      card.innerHTML = `
+        <div class="quest-card-header">
+          <div class="quest-card-name">${idea.name || 'Unnamed Quest'}</div>
+          <div class="quest-card-tagline">${idea.tagline || ''}</div>
+        </div>
+        <div class="quest-card-body">
+          <div class="quest-section">
+            <div class="quest-section-label">🐉 The dragon it slays</div>
+            <div class="dragon-line">${idea.dragon_slain || '—'}</div>
+          </div>
+          ${prosList ? `
+          <div class="quest-section">
+            <div class="quest-section-label">⚡ Why your party is weirdly well-suited for this</div>
+            <ul class="quest-list">${prosList}</ul>
+          </div>` : ''}
+          ${consList ? `
+          <div class="quest-section">
+            <div class="quest-section-label">☠️ Traps and pitfalls (be warned)</div>
+            <ul class="quest-list">${consList}</ul>
+          </div>` : ''}
+          ${compList ? `
+          <div class="quest-section">
+            <div class="quest-section-label">🗺️ Others who attempted this quest (and in some cases raised money for it)</div>
+            <ul class="quest-list">${compList}</ul>
+          </div>` : ''}
+        </div>
+      `;
+
+      cardsEl.appendChild(card);
+
+      // Staggered reveal
+      setTimeout(() => card.classList.add('revealed'), i * 700);
+    });
+
+    // Alignment
+    const alignEl = document.getElementById('alignment-grid');
+    const united  = (data.alignment?.united_on || []);
+    const tension = (data.alignment?.tension_points || []);
+
+    alignEl.innerHTML = `
+      <div class="alignment-col">
+        <h3 style="color: var(--emerald); margin-bottom: 6px;">Where your party was of one mind</h3>
+        ${united.map(u => `<div class="alignment-item">${u}</div>`).join('') || '<div class="alignment-item text-dim">—</div>'}
+      </div>
+      <div class="alignment-col">
+        <h3 style="color: var(--ruby); margin-bottom: 6px;">Creative tension (a.k.a. the fun arguments you'll have later)</h3>
+        ${tension.map(t => `<div class="alignment-item">${t}</div>`).join('') || '<div class="alignment-item text-dim">—</div>'}
+      </div>
+    `;
+
+    // Chemistry score
+    const score = data.chemistry_score || 0;
+    const chemEl = document.getElementById('chemistry-number');
+    const flavorEl = document.getElementById('chemistry-flavor');
+
+    // Animate count-up
+    let current = 0;
+    const step  = Math.ceil(score / 40);
+    const timer = setInterval(() => {
+      current = Math.min(current + step, score);
+      chemEl.textContent = `${current}%`;
+      if (current >= score) clearInterval(timer);
+    }, 30);
+
+    // Flavor text based on score
+    let flavor;
+    if (score >= 80) {
+      flavor = `The Oracle finds this promising. Your party thinks remarkably alike. This is either a great sign or a confirmation bias problem. Probably both.`;
+    } else if (score >= 60) {
+      flavor = `Solid alignment with healthy divergence. The Oracle notes that the remaining ${100 - score}% is probably about naming things.`;
+    } else {
+      flavor = `Strong creative tension in this party. The Oracle has seen stranger combinations succeed. It has also seen them fail spectacularly. Good luck.`;
+    }
+    flavorEl.textContent = flavor;
+  }
+
+  init();
+</script>
+</body>
+</html>

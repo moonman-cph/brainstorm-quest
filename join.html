@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Choose Your Class — BrainStorm Quest</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .class-desc-panel {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      min-height: 64px;
+      font-size: 12px;
+      color: var(--text-dim);
+      font-style: italic;
+      line-height: 1.6;
+      transition: opacity 0.2s;
+    }
+    .name-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .session-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .error-msg {
+      font-size: 12px;
+      color: var(--ruby);
+      min-height: 18px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="session-info">
+    <div>
+      <h3 style="margin-bottom: 4px;">Quest</h3>
+      <span id="quest-name-display" style="font-size: 14px; color: var(--text);"></span>
+    </div>
+    <div id="code-display"></div>
+  </div>
+
+  <h2 style="margin-bottom: 6px;">Choose your class</h2>
+  <p class="subtitle" style="margin-bottom: 20px;">
+    Choose your class wisely. It won't actually change your answers much,
+    but it will change how you feel about yourself.
+  </p>
+
+  <div class="class-grid" id="class-grid" style="margin-bottom: 14px;">
+    <!-- populated by JS -->
+  </div>
+
+  <div class="class-desc-panel" id="class-desc">
+    ← Pick a class to see your destiny. (It's mostly flavour text.)
+  </div>
+
+  <hr class="divider">
+
+  <div class="name-row" style="margin-bottom: 20px;">
+    <label class="section-label" for="hero-name">Your hero's name</label>
+    <input
+      class="input"
+      id="hero-name"
+      placeholder="Or just press Enter to use your class name"
+      maxlength="30"
+    >
+    <span class="text-small text-dim" id="anon-note" style="display:none;">
+      This quest is anonymous — your name won't be shown to other heroes.
+    </span>
+  </div>
+
+  <div class="error-msg" id="error-msg"></div>
+
+  <button class="btn btn--gold btn--full btn--large" id="enter-btn" disabled>
+    🗡️ Enter the quest
+  </button>
+
+  <p style="margin-top: 16px; font-size: 11px; color: var(--text-dim); text-align: center; font-style: italic;">
+    You'll answer 5 questions. It takes about 5 minutes.<br>
+    The Oracle reads everything. (The Oracle is an AI. Still.)
+  </p>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script src="app.js"></script>
+<script>
+  let session = null;
+  let selectedClass = null;
+
+  const classGrid    = document.getElementById('class-grid');
+  const classDesc    = document.getElementById('class-desc');
+  const heroNameInput= document.getElementById('hero-name');
+  const enterBtn     = document.getElementById('enter-btn');
+  const errorMsg     = document.getElementById('error-msg');
+  const anonNote     = document.getElementById('anon-note');
+
+  async function init() {
+    const code = getParam('session');
+    const isHost = getParam('host') === 'true';
+    if (!code) { window.location.href = 'index.html'; return; }
+
+    try {
+      session = await fetchSession(code);
+    } catch {
+      window.location.href = 'index.html';
+      return;
+    }
+
+    document.getElementById('quest-name-display').textContent = session.name;
+    document.getElementById('code-display').innerHTML =
+      `<span class="code-badge" title="Click to copy" id="code-copy">${session.code}</span>`;
+
+    document.getElementById('code-copy').addEventListener('click', async () => {
+      const link = `${window.location.origin}/join.html?session=${session.code}`;
+      await copyToClipboard(link);
+      document.getElementById('code-copy').textContent = '✓ Copied!';
+      setTimeout(() => {
+        document.getElementById('code-copy').textContent = session.code;
+      }, 1500);
+    });
+
+    if (session.anonymous) anonNote.style.display = 'block';
+
+    // Save isHost flag
+    const local = loadLocal() || {};
+    saveLocal({ ...local, sessionId: session.id, sessionCode: session.code, isHost });
+
+    renderClasses();
+  }
+
+  function renderClasses() {
+    QUEST_CONFIG.classes.forEach(cls => {
+      const card = document.createElement('div');
+      card.className = 'class-card';
+      card.dataset.id = cls.id;
+      card.innerHTML = `
+        <span class="class-icon">${cls.icon}</span>
+        <span class="class-name">${cls.label}</span>
+        <span class="class-tagline">${cls.tagline}</span>
+      `;
+      card.addEventListener('click', () => selectClass(cls, card));
+      classGrid.appendChild(card);
+    });
+  }
+
+  function selectClass(cls, card) {
+    document.querySelectorAll('.class-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    selectedClass = cls;
+    classDesc.textContent = cls.description;
+    if (!heroNameInput.value.trim()) heroNameInput.placeholder = cls.label;
+    enterBtn.disabled = false;
+    errorMsg.textContent = '';
+  }
+
+  enterBtn.addEventListener('click', async () => {
+    if (!selectedClass) { errorMsg.textContent = 'Pick a class first.'; return; }
+
+    const name = heroNameInput.value.trim() || selectedClass.label;
+    const slot = session.anonymous ? selectedClass.label : name;
+
+    // Check slot isn't already taken
+    const existing = await fetchResponses(session.id);
+    const takenSlots = existing.map(r => r.slot);
+    if (takenSlots.includes(slot) && !session.anonymous) {
+      errorMsg.textContent = `"${slot}" is already in the party. Try a different name.`;
+      return;
+    }
+
+    const local = loadLocal() || {};
+    saveLocal({
+      ...local,
+      heroName: name,
+      heroSlot: slot,
+      heroClass: selectedClass.id,
+    });
+
+    navigate('quest.html', { session: session.code });
+  });
+
+  init();
+</script>
+</body>
+</html>

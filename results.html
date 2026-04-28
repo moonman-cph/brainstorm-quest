@@ -209,6 +209,11 @@
             <div class="quest-section-label">🐉 The dragon it slays</div>
             <div class="dragon-line">${idea.dragon_slain || '—'}</div>
           </div>
+          ${idea.spark ? `
+          <div class="quest-section">
+            <div class="quest-section-label">✨ The collision that made this</div>
+            <div class="dragon-line" style="border-left-color: var(--gold); font-style: italic; color: var(--text-dim);">${idea.spark}</div>
+          </div>` : ''}
           ${prosList ? `
           <div class="quest-section">
             <div class="quest-section-label">⚡ Why your party is weirdly well-suited for this</div>

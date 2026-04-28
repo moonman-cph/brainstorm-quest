@@ -89,17 +89,17 @@ const CLASS_LABELS = {
 };
 
 const QUESTION_LABELS = {
-  dragon:     'Dragon they fight (problem lived)',
-  spell:      'Most powerful spell (unique expertise)',
-  who:        'Who they fight for (target customer)',
-  path:       'Preferred path (solution type)',
-  curse:      'Curse on the land (market gap)',
+  moment:     'A specific moment the system failed them',
+  contraband: 'Their hidden / surprising skill',
+  borrowing:  'Something borrowed from another industry',
+  path:       'Preferred solution type',
+  conviction: 'Their unpopular conviction',
 };
 
 function buildPrompt(session, responses) {
   const partyBlock = responses.map((r, i) => {
-    const cls  = CLASS_LABELS[r.class] || r.class;
-    const ans  = r.answers || {};
+    const cls   = CLASS_LABELS[r.class] || r.class;
+    const ans   = r.answers || {};
     const lines = Object.entries(QUESTION_LABELS)
       .map(([key, label]) => ans[key] ? `  ${label}: ${ans[key]}` : null)
       .filter(Boolean)
@@ -107,10 +107,21 @@ function buildPrompt(session, responses) {
     return `Hero ${i + 1} — ${cls}\n${lines}`;
   }).join('\n\n');
 
-  const systemPrompt = `You are the Oracle — an ancient intelligence that synthesizes the collective wisdom of a startup ideation party.
-Your task: read the heroes' answers and generate exactly 3 concrete, distinct startup ideas grounded in their actual words.
-Be specific and bold. Reference their real inputs. Do not generate generic startup ideas.
-Output ONLY valid JSON. No markdown, no explanation, no code fences. Just the JSON object.`;
+  const systemPrompt = `You are the Oracle — a synthesis engine for a collaborative startup ideation tool.
+
+Your job is NOT to take each person's answers and wrap them in a startup name. That is a failure mode called "one idea per hero." You must refuse to do it.
+
+Your actual job: find COLLISIONS. Look for the place where Hero A's forgotten skill intersects with Hero B's industry analogy intersects with Hero C's unpopular conviction. The most interesting ideas live in those collisions, not inside any single person's head.
+
+RULES YOU MUST FOLLOW:
+1. Do not generate one idea per hero. If you have 3 heroes, do not produce 3 ideas that each correspond to one hero's framing. Ideas must cross hero boundaries.
+2. Every idea must explicitly cite which heroes' specific inputs combined to produce it. Use the exact language from their answers, not paraphrases.
+3. The third idea MUST be the most unexpected one — the idea that none of the heroes would have proposed on their own. It should feel like it came from the collision rather than from any individual input.
+4. For each idea, produce a "spark" field: one sentence describing exactly which heroes' fragments collided to create it. Format: "Hero A's [specific thing] + Hero B's [specific thing] → [the insight that emerged]."
+5. Be concrete. Cite their actual words. Generic startup language is a disqualification.
+6. Do not generate generic startup ideas. No "AI-powered platform for X." Earn every noun.
+
+Output ONLY valid JSON. No markdown, no explanation, no code fences.`;
 
   const userPrompt = `Quest: "${session.name}"
 Party size: ${responses.length} heroes
@@ -118,23 +129,51 @@ Anonymous: ${session.anonymous}
 
 ${partyBlock}
 
+Before you generate ideas, do this internally (do not output it):
+- List every fragment (moment, skill, analogy, conviction) across all heroes.
+- Find the three most non-obvious pairings across heroes.
+- Build ideas from those pairings, not from individual hero profiles.
+
 Return this exact JSON structure (no other text):
 {
   "ideas": [
     {
-      "name": "short memorable startup name",
-      "tagline": "one sentence — for the heroes who are tired of...",
-      "dragon_slain": "the specific problem this solves, in one sentence",
-      "pros": ["strength 1 drawn from party answers", "strength 2", "strength 3"],
-      "cons": ["risk or challenge 1", "risk 2"],
+      "name": "short memorable name — not a portmanteau, not 'AI for X'",
+      "tagline": "one sentence — written for the person who has lived this problem",
+      "dragon_slain": "the specific problem this solves, citing the actual moments heroes described",
+      "spark": "Hero A's [exact fragment] + Hero B's [exact fragment] → the collision that made this possible",
+      "pros": [
+        "strength 1 — cite which hero's input makes this credible",
+        "strength 2 — reference a specific skill or analogy from the answers",
+        "strength 3"
+      ],
+      "cons": ["risk 1", "risk 2"],
       "competitors": [
-        {"name": "Competitor Name", "difference": "how this is different"}
+        {"name": "Competitor Name", "difference": "what this does that they don't"}
       ]
+    },
+    {
+      "name": "...",
+      "tagline": "...",
+      "dragon_slain": "...",
+      "spark": "...",
+      "pros": ["...", "...", "..."],
+      "cons": ["...", "..."],
+      "competitors": [{"name": "...", "difference": "..."}]
+    },
+    {
+      "name": "THE WILD ONE — this idea should feel like it came from nowhere but traces back to everything",
+      "tagline": "...",
+      "dragon_slain": "...",
+      "spark": "the full collision chain — cite 3+ inputs from different heroes and the unexpected leap between them",
+      "pros": ["...", "...", "..."],
+      "cons": ["...", "..."],
+      "competitors": [{"name": "...", "difference": "..."}]
     }
   ],
   "alignment": {
-    "united_on": ["theme the whole party agreed on", "another shared theme"],
-    "tension_points": ["where party perspectives diverged", "another tension"]
+    "united_on": ["a theme the whole party circled without naming it directly", "another genuine shared thread"],
+    "tension_points": ["where party perspectives would create productive arguments", "another real tension"]
   },
   "chemistry_score": 74
 }`;
